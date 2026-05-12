@@ -99,11 +99,6 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections \
     && sed -i 's/^AcceptEnv LANG LC_\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config \
     && echo "root:root" | chpasswd
 
-# ── init (PID 1 for microVM) ──────────────────────────────────────────────────
-COPY --from=spinupdev/init /init /init
-COPY --from=spinupdev/init /init /etc/init
-COPY --from=spinupdev/init /init /usr/bin/init
-
 EXPOSE 22
 WORKDIR /workspace
 USER user
