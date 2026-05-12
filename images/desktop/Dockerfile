@@ -65,11 +65,6 @@ RUN git clone --depth 1 --branch zeish-desktop \
     https://github.com/spinupdev/noVNC.git /opt/novnc && \
     ln -sf /opt/novnc/vnc.html /opt/novnc/index.html
 
-# ── initd (PID 1 for microVM) ─────────────────────────────────────────────────
-COPY --from=spinupdev/init /init /init
-COPY --from=spinupdev/init /init /etc/init
-COPY --from=spinupdev/init /init /usr/bin/init
-
 # ── Non-root desktop user ─────────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash -G sudo ${USER} && \
     echo "${USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd && \

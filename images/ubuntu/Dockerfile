@@ -88,9 +88,6 @@ RUN sed -i -e 's/^AcceptEnv LANG LC_\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_con
 RUN echo "root:root" | chpasswd
 
 
-COPY --from=spinupdev/init /init /init
-COPY --from=spinupdev/init /init /etc/init
-COPY --from=spinupdev/init /init /usr/bin/init
 RUN apt-get -y autoremove && \
     apt-get -y clean && \
     rm -rf /var/lib/apt/lists/*
