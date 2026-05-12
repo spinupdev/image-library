@@ -8,7 +8,8 @@ Docker images for the spinupdev platform. Images are published to
 | Image | Base | Description |
 |-------|------|-------------|
 | [`desktop`](images/desktop) | ubuntu:26.04 | XFCE4 desktop over VNC/noVNC, Firefox, supervisord |
-| [`ubuntu`](images/ubuntu) | ubuntu:22.04 | Base Ubuntu with SSH, user setup, and init |
+| [`ubuntu`](images/ubuntu) | ubuntu:26.04 | Base Ubuntu with SSH, user setup, and init |
+| [`workstation`](images/workstation) | ubuntu:26.04 | Dev workstation with Docker, Go, Node 26, Python, AI agent CLIs |
 
 ## Building locally
 
