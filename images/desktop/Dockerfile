@@ -7,7 +7,6 @@ ENV DISPLAY=:1 \
     PROXY_PORT=8080 \
     VNC_RESOLUTION=1280x720 \
     VNC_DEPTH=24 \
-    VNC_PASSWORD=changeme \
     USER=user \
     HOME=/home/user
 
@@ -83,8 +82,8 @@ COPY config/supervisord.conf /etc/supervisor/supervisord.conf
 COPY config/xfce4/ /etc/skel/.config/xfce4/
 COPY run.json /etc/run.json
 COPY scripts/entrypoint.sh /entrypoint.sh
-COPY scripts/setup-vnc.sh /setup-vnc.sh
-RUN chmod +x /entrypoint.sh /setup-vnc.sh
+COPY scripts/websockify-fork.py /usr/local/bin/websockify-fork
+RUN chmod +x /entrypoint.sh /usr/local/bin/websockify-fork
 
 RUN mkdir -p /var/log/supervisor \
     && chown -R ${USER}:${USER} ${HOME}
