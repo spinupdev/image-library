@@ -30,11 +30,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Docker CE ─────────────────────────────────────────────────────────────────
+# Pin to 'noble' — Docker CE doesn't publish packages for ubuntu 26.04 yet
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
     && chmod a+r /usr/share/keyrings/docker.gpg \
-    && CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME}}") \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${CODENAME} main" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble main" \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y \
         docker-ce docker-ce-cli containerd.io \
