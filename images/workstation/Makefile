@@ -1,4 +1,4 @@
-IMAGE = spinupdev/workstation
+IMAGE = ghcr.io/spinupdev/workstation
 TAG   = latest
 
 .PHONY: build run
