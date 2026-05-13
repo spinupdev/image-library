@@ -84,6 +84,7 @@ RUN npm install -g \
 # ── User setup ────────────────────────────────────────────────────────────────
 RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections \
     && echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections \
+    && userdel -r ubuntu 2>/dev/null || true \
     && useradd -u 1000 -m -s /bin/bash -G sudo,docker,users user \
     && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd \
