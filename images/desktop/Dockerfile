@@ -66,9 +66,10 @@ RUN git clone --depth 1 --branch zeish-desktop \
     ln -sf /opt/novnc/vnc.html /opt/novnc/index.html
 
 # ── Non-root desktop user ─────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash -G sudo ${USER} && \
-    echo "${USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd && \
-    chmod 440 /etc/sudoers.d/nopasswd
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && useradd -u 1000 -m -s /bin/bash -G sudo ${USER} \
+    && echo "${USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd \
+    && chmod 440 /etc/sudoers.d/nopasswd
 
 # ── Default browser ───────────────────────────────────────────────────────────
 RUN update-alternatives --set x-www-browser /usr/bin/firefox && \
