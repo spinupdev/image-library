@@ -94,25 +94,38 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections \
     && echo "" > /var/lib/dbus/machine-id \
     && echo "root:root" | chpasswd
 
-USER user
-WORKDIR /home/user
+# ── User-owned toolchain installs ──────────────────────────────────────────────
+# Deliberately no `USER user` directive anywhere in this image: a container's
+# final baked Config.User (from the last USER instruction in the whole FROM
+# chain) changes how depot's initd execs the workload — an explicit user
+# (even "root") makes it go through a full /etc/passwd lookup + explicit
+# setuid/setgid/setgroups credential path, instead of just inheriting initd's
+# own already-root identity. That extra path is where sandboxes built on top
+# of this image failed to boot in production. `su -p user -c '...'` gets the
+# same per-step non-root ownership (files under /home/user end up uid 1000)
+# without ever touching the image's baked Config.User — every RUN here still
+# executes as the implicit-root default, exactly like a plain ubuntu image.
 
 # ── Node.js via nvm (version-switchable) ──────────────────────────────────────
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
+RUN su -p user -c '\
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
     && . "$NVM_DIR/nvm.sh" \
     && nvm install --lts \
-    && nvm alias default 'lts/*'
+    && nvm alias default "lts/*" \
+    '
 
 # ── Chrome, arm64 fallback: Playwright's prebuilt Chromium ────────────────────
 # `--with-deps` needs root for the system libs it installs; user has
 # passwordless sudo (configured above), which playwright's installer uses.
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" != "amd64" ]; then \
-        . "$NVM_DIR/nvm.sh" \
-        && npx --yes playwright install --with-deps chromium \
-        && CHROME_BIN=$(find "$HOME/.cache/ms-playwright" -type f -name chrome -o -type f -name headless_shell 2>/dev/null | head -1) \
-        && sudo ln -sf "$CHROME_BIN" /usr/local/bin/google-chrome-stable \
-        && sudo ln -sf /usr/local/bin/google-chrome-stable /usr/local/bin/google-chrome; \
+        su -p user -c '\
+            . "$NVM_DIR/nvm.sh" \
+            && npx --yes playwright install --with-deps chromium \
+            && CHROME_BIN=$(find "$HOME/.cache/ms-playwright" -type f -name chrome -o -type f -name headless_shell 2>/dev/null | head -1) \
+            && sudo ln -sf "$CHROME_BIN" /usr/local/bin/google-chrome-stable \
+            && sudo ln -sf /usr/local/bin/google-chrome-stable /usr/local/bin/google-chrome \
+            '; \
     fi
 
 # ── Python via pyenv (version-switchable, alongside system python3) ──────────
@@ -120,17 +133,20 @@ RUN ARCH=$(dpkg --print-architecture) \
 # purging them within this single RUN keeps them out of the image entirely
 # (a separate later `apt purge` would only mark them deleted, not shrink the
 # layer they were installed in).
-RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
         libncurses-dev libffi-dev liblzma-dev tk-dev \
-    && curl https://pyenv.run | bash \
-    && eval "$(pyenv init -)" \
-    && pyenv install 3.12.7 \
-    && pyenv global 3.12.7 \
-    && sudo apt-get purge -y --auto-remove \
+    && su -p user -c '\
+        export PATH="$PYENV_ROOT/bin:$PATH" \
+        && curl https://pyenv.run | bash \
+        && eval "$(pyenv init -)" \
+        && pyenv install 3.12.7 \
+        && pyenv global 3.12.7 \
+        ' \
+    && apt-get purge -y --auto-remove \
         libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
         libncurses-dev libffi-dev liblzma-dev tk-dev \
-    && sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Go via g (version-switchable) ─────────────────────────────────────────────
 # GOROOT=$HOME/.go, GOPATH=$HOME/go (g's defaults) — both already on PATH.
@@ -138,28 +154,46 @@ RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
 # and Docker's /bin/sh -c leaves it unset ("no shell has been selected").
 # The installer itself downloads and activates the latest stable Go release —
 # no separate `g install` needed.
-RUN export SHELL=/bin/bash \
-    && curl -fsSL https://github.com/stefanmaric/g/releases/latest/download/install | sh -s -- -y
+RUN su -p user -c '\
+    export SHELL=/bin/bash \
+    && curl -fsSL https://github.com/stefanmaric/g/releases/latest/download/install | sh -s -- -y \
+    '
 
 # ── AI agent CLIs (need nvm's node on PATH) ───────────────────────────────────
-RUN . "$NVM_DIR/nvm.sh" && npm install -g \
-    @anthropic-ai/claude-code \
-    @openai/codex \
-    @google/gemini-cli \
-    && npm cache clean --force
+RUN su -p user -c '\
+    . "$NVM_DIR/nvm.sh" && npm install -g \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+        @google/gemini-cli \
+    && npm cache clean --force \
+    '
 
 # ── Grok Build (xAI's official coding agent CLI) ──────────────────────────────
-RUN curl -fsSL https://x.ai/cli/install.sh | bash || true
+RUN su -p user -c 'curl -fsSL https://x.ai/cli/install.sh | bash || true'
 
 # ── Shell profile: make nvm/pyenv/g available in every login & exec shell ────
 # No `chown -R /home/user` here: everything under it was already installed as
-# `USER user` above, so it's correctly owned. A blanket recursive chown on a
-# multi-GB tree forces overlay2 to copy-up every file into a new layer for a
-# no-op ownership change — roughly doubling the image size for nothing.
-USER root
+# `user` above (via su -p), so it's correctly owned. A blanket recursive chown
+# on a multi-GB tree forces overlay2 to copy-up every file into a new layer
+# for a no-op ownership change — roughly doubling the image size for nothing.
 COPY profile.d/depot-toolchain.sh /etc/profile.d/depot-toolchain.sh
-RUN chmod 644 /etc/profile.d/depot-toolchain.sh \
-    && mkdir -p /workspace && chown user:user /workspace
+COPY profile.d/prompt.sh /etc/profile.d/prompt.sh
+RUN chmod 644 /etc/profile.d/depot-toolchain.sh /etc/profile.d/prompt.sh \
+    && mkdir -p /workspace && chown user:user /workspace \
+    # profile.d only runs for login shells; desktop terminal tabs and plain
+    # `docker exec` shells are typically non-login, so also source it from
+    # bash.bashrc. But Ubuntu's per-user ~/.bashrc (root's, and the copy
+    # useradd already made at /home/user/.bashrc from /etc/skel) sets PS1
+    # itself and is sourced AFTER bash.bashrc for non-login shells — so it
+    # silently wins unless we also append there, last, so it overrides them
+    # instead of the other way around. /etc/hostname is a static fallback
+    # for non-bash contexts.
+    && SOURCE_LINE='\n[ -f /etc/profile.d/prompt.sh ] && . /etc/profile.d/prompt.sh\n' \
+    && printf "$SOURCE_LINE" >> /etc/bash.bashrc \
+    && printf "$SOURCE_LINE" >> /etc/skel/.bashrc \
+    && printf "$SOURCE_LINE" >> /root/.bashrc \
+    && printf "$SOURCE_LINE" >> /home/user/.bashrc \
+    && chown user:user /home/user/.bashrc \
+    && echo "zeish" > /etc/hostname
 
 WORKDIR /workspace
-USER user

@@ -2,7 +2,10 @@ FROM ghcr.io/spinupdev/base:latest
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-USER root
+# No `USER` directive: base already never sets one, and everything below runs
+# as the implicit-root default (sshd needs root to bind :22 and manage host
+# keys anyway). See base/Dockerfile for why an explicit baked Config.User
+# (even non-root) breaks depot's initd workload exec.
 
 # ── SSH access (headless workstation only) ────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,4 +16,3 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 EXPOSE 22
 WORKDIR /workspace
-USER user

@@ -8,7 +8,9 @@ ENV DISPLAY=:1 \
     VNC_RESOLUTION=1280x720 \
     VNC_DEPTH=24
 
-USER root
+# No `USER` directive: base already never sets one, and everything below runs
+# as the implicit-root default. See base/Dockerfile for why an explicit
+# baked Config.User (even "root") breaks depot's initd workload exec.
 
 # ── X11 + desktop ─────────────────────────────────────────────────────────────
 # No screensaver/lock package installed — nothing to disable, nothing to lock
