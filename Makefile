@@ -1,12 +1,15 @@
-.PHONY: build desktop ubuntu workstation
+.PHONY: build base desktop ubuntu workstation
 
-build: desktop ubuntu workstation
+build: base desktop ubuntu workstation
 
-desktop:
+base:
+	$(MAKE) -C images/base build
+
+desktop: base
 	$(MAKE) -C images/desktop build
 
 ubuntu:
 	$(MAKE) -C images/ubuntu build
 
-workstation:
+workstation: base
 	$(MAKE) -C images/workstation build

@@ -7,15 +7,24 @@ Docker images for the spinupdev platform. Images are published to
 
 | Image | Base | Description |
 |-------|------|-------------|
-| [`desktop`](images/desktop) | ubuntu:26.04 | XFCE4 desktop over VNC/noVNC, Firefox, supervisord |
+| [`base`](images/base) | ubuntu:26.04 | Shared dev toolchain: Docker, version-switchable Go/Node/Python (`g`/`nvm`/`pyenv`), ripgrep/fzf/fd/gh/jq, filebrowser, AI agent CLIs. Not run standalone in practice — `desktop` and `workstation` both build `FROM` it |
+| [`desktop`](images/desktop) | `base` | XFCE4 desktop over VNC/noVNC, Firefox, supervisord — everything in `base` plus a GUI |
 | [`ubuntu`](images/ubuntu) | ubuntu:26.04 | Base Ubuntu with SSH, user setup, and init |
-| [`workstation`](images/workstation) | ubuntu:26.04 | Dev workstation with Docker, Go, Node 26, Python, AI agent CLIs |
+| [`workstation`](images/workstation) | `base` | Headless dev workstation — `base` plus sshd |
+
+`desktop` and `workstation` share the exact same toolchain (`base`) so a script
+or agent that works in one works in the other; `desktop` is just `base` with a
+GUI bolted on.
 
 ## Building locally
 
 Each image has a `Makefile` with standard targets.
 
 ```sh
+# desktop and workstation are FROM ghcr.io/spinupdev/base:latest, so build
+# base first (or `make base` from the repo root)
+make -C images/base build
+
 # Build a specific image
 make -C images/desktop build
 
@@ -34,7 +43,6 @@ Environment variables for the desktop image:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VNC_PASSWORD` | `changeme` | VNC password |
 | `VNC_RESOLUTION` | `1280x720` | Display resolution |
 | `VNC_DEPTH` | `24` | Color depth |
 | `AUTH_ENABLED` | `false` | Enable JWT auth on the noVNC proxy |
@@ -56,6 +64,10 @@ git push origin ubuntu/v1.0.0
 ```
 
 The workflow builds for all platforms listed in the image's `platform` file.
+
+`desktop` and `workstation` `FROM ghcr.io/spinupdev/base:latest` — release
+`base` first (`git tag base/v1.0.0 && git push origin base/v1.0.0`) whenever
+its Dockerfile changes, before re-releasing `desktop`/`workstation`.
 
 ## Adding a new image
 

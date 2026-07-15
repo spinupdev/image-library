@@ -1,4 +1,4 @@
-IMAGE = ghcr.io/spinupdev/desktop
+IMAGE = ghcr.io/spinupdev/base
 TAG   = latest
 DIR   = $(shell pwd)
 
@@ -8,9 +8,7 @@ build:
 	docker build -t $(IMAGE):$(TAG) $(DIR)
 
 run:
-	docker run --rm -p 8080:8080 \
-		--shm-size=256m \
-		$(IMAGE):$(TAG)
+	docker run --rm -it $(IMAGE):$(TAG) /bin/bash
 
 push:
 	docker push $(IMAGE):$(TAG)

@@ -1,5 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Run websockify with fork-based workers.
+
+NOT `/usr/bin/env python3`: the base image puts pyenv's python3 shim ahead of
+/usr/bin on PATH, but python3-websockify is only installed into the system
+interpreter's site-packages. Pin the shebang so this keeps working regardless
+of PATH/pyenv state.
 
 Ubuntu 26.04 ships Python 3.14, where multiprocessing defaults to forkserver
 on POSIX. The distro websockify package expects fork-style socket inheritance;
