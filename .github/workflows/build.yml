@@ -10,23 +10,61 @@ permissions:
   packages: write
 
 jobs:
-  build-push:
-    name: Build & Push
+  prepare:
+    name: Prepare
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      platforms: ${{ steps.platform.outputs.targets }}
+      platform_matrix: ${{ steps.platform.outputs.matrix }}
+    steps:
+      - name: Parse image name from tag
+        id: image
+        run: |
+          TAG="${{ github.ref_name }}"
+          IMAGE="${TAG%%/*}"
+          echo "name=${IMAGE}" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read platform targets
+        id: platform
+        run: |
+          FILE="images/${{ steps.image.outputs.name }}/platform"
+          if [ -f "$FILE" ]; then
+            TARGETS="$(cat "$FILE" | tr -d '[:space:]')"
+          else
+            TARGETS="linux/amd64"
+          fi
+          echo "targets=${TARGETS}" >> "$GITHUB_OUTPUT"
+          # Native runner per platform — no QEMU emulation. arm64 in particular
+          # was taking 45-60+ minutes emulated (syscall-heavy steps like
+          # apt-installing Chromium's dependency set); native arm64 runners
+          # build at the same speed as amd64.
+          MATRIX="$(echo "$TARGETS" | tr ',' '\n' | jq -R -s -c '
+            split("\n") | map(select(length > 0)) | map(
+              if . == "linux/arm64" then {platform: ., runner: "ubuntu-24.04-arm"}
+              else {platform: ., runner: "ubuntu-latest"}
+              end
+            )
+          ')"
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.platform_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
-        id: buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Available platforms
-        run: echo ${{ steps.buildx.outputs.platforms }}
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -35,39 +73,78 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Parse image name from tag
-        id: image
-        run: |
-          TAG="${{ github.ref_name }}"
-          IMAGE="${TAG%%/*}"
-          echo "name=${IMAGE}" >> $GITHUB_OUTPUT
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: images/${{ needs.prepare.outputs.image }}
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ needs.prepare.outputs.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ needs.prepare.outputs.image }}-${{ matrix.platform }}
 
-      - name: Read platform targets
-        id: platform
+      - name: Export digest
         run: |
-          FILE="images/${{ steps.image.outputs.name }}/platform"
-          if [ -f "$FILE" ]; then
-            echo "targets=$(cat $FILE | tr -d '[:space:]')" >> $GITHUB_OUTPUT
-          else
-            echo "targets=linux/amd64" >> $GITHUB_OUTPUT
-          fi
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ needs.prepare.outputs.image }}-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge manifest & push tags
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ needs.prepare.outputs.image }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ steps.image.outputs.name }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ needs.prepare.outputs.image }}
           tags: |
             type=match,pattern=.+/(v.*),group=1
             type=raw,value=latest
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: images/${{ steps.image.outputs.name }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ steps.platform.outputs.targets }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ needs.prepare.outputs.image }}"
+          TAGS='${{ steps.meta.outputs.tags }}'
+          TAG_ARGS=""
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            TAG_ARGS="${TAG_ARGS} -t ${tag}"
+          done <<< "$TAGS"
+          # shellcheck disable=SC2086
+          docker buildx imagetools create ${TAG_ARGS} \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/${{ needs.prepare.outputs.image }}:latest
