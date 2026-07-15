@@ -64,6 +64,22 @@ RUN ARCH=$(dpkg --print-architecture) \
 # ── filebrowser (web file manager, opt-in per variant) ────────────────────────
 RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
+# ── Chrome ─────────────────────────────────────────────────────────────────
+# Google only publishes Chrome for linux/amd64 — there is no arm64 build, and
+# Ubuntu's `chromium-browser` package is a snap-transitional stub that can't
+# actually run inside a container (no snapd). So: real Google Chrome Stable
+# on amd64; on arm64, fall back to Playwright's prebuilt Chromium (installed
+# later, once nvm/node exist) and symlink it to the same `google-chrome` name
+# so callers don't need to branch on architecture.
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "amd64" ]; then \
+        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome.gpg \
+        && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+            > /etc/apt/sources.list.d/google-chrome.list \
+        && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+        && apt-get clean && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # ── Python tooling (system-wide) ─────────────────────────────────────────────
 RUN pip3 install --no-cache-dir --break-system-packages uv pipx
 
@@ -86,6 +102,18 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | b
     && . "$NVM_DIR/nvm.sh" \
     && nvm install --lts \
     && nvm alias default 'lts/*'
+
+# ── Chrome, arm64 fallback: Playwright's prebuilt Chromium ────────────────────
+# `--with-deps` needs root for the system libs it installs; user has
+# passwordless sudo (configured above), which playwright's installer uses.
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" != "amd64" ]; then \
+        . "$NVM_DIR/nvm.sh" \
+        && npx --yes playwright install --with-deps chromium \
+        && CHROME_BIN=$(find "$HOME/.cache/ms-playwright" -type f -name chrome -o -type f -name headless_shell 2>/dev/null | head -1) \
+        && sudo ln -sf "$CHROME_BIN" /usr/local/bin/google-chrome-stable \
+        && sudo ln -sf /usr/local/bin/google-chrome-stable /usr/local/bin/google-chrome; \
+    fi
 
 # ── Python via pyenv (version-switchable, alongside system python3) ──────────
 # The -dev headers below are only needed to compile CPython; installing and
