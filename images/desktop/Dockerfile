@@ -2,81 +2,50 @@ FROM ghcr.io/spinupdev/base:latest
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV DISPLAY=:1 \
-    VNC_PORT=5900 \
+ENV VNC_PORT=5900 \
     PROXY_PORT=8080 \
-    VNC_RESOLUTION=1280x720 \
-    VNC_DEPTH=24
+    XDG_RUNTIME_DIR=/run/user/1000 \
+    WAYLAND_DISPLAY=wayland-0 \
+    WLR_BACKENDS=headless \
+    WLR_LIBINPUT_NO_DEVICES=1
 
 # No `USER` directive: base already never sets one, and everything below runs
 # as the implicit-root default. See base/Dockerfile for why an explicit
 # baked Config.User (even "root") breaks depot's initd workload exec.
 
-# ── X11 + desktop ─────────────────────────────────────────────────────────────
-# No screensaver/lock package installed — nothing to disable, nothing to lock
-# the session after idle.
+# ── Wayland + desktop ─────────────────────────────────────────────────────────
+# Budgie 10.x has no X11 session anymore (dropped mutter/X11 for its own
+# labwc-based Wayland compositor — see /usr/share/wayland-sessions, no
+# /usr/share/xsessions entry ships). So this runs labwc headless (WLR_BACKENDS
+# above; no real GPU/DRM in the container) with wayvnc as the capture server —
+# wayvnc speaks the same RFB protocol x11vnc did, over wlr-screencopy instead
+# of XDamage polling, so websockify/noVNC/proxyd's auth all stay untouched.
+# Stock Budgie look (no rebrand/theme pass — see git history for the old XFCE
+# + Fluent/Bibata rebrand pipeline this replaced).
+#
+# xdg-desktop-portal(-gnome): file pickers, screenshot/share portals, and
+# other GIO-mediated desktop integration a lot of GTK/Electron apps assume
+# exists — absent by default in a headless image.
+# nautilus/gvfs(-backends): there was no file manager at all before this.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        xvfb \
-        xserver-xorg-core \
-        x11-xserver-utils \
-        x11-utils \
-        dbus-x11 \
-        libx11-xcb1 \
-        xfce4 \
-        xfce4-terminal \
-        xfce4-goodies \
+        labwc \
+        wayvnc \
+        dbus \
+        xdg-desktop-portal \
+        xdg-desktop-portal-gnome \
+        budgie-desktop \
+        gnome-terminal \
+        nautilus \
+        gvfs \
+        gvfs-backends \
         fonts-liberation \
         fonts-noto \
         fonts-noto-color-emoji \
-        x11vnc \
         python3-websockify \
         supervisor \
-        # Fluent theme install deps + a standalone dock (XFCE has a panel but
-        # no GNOME-style dash; Plank fills that role and reads the same GTK
-        # theme, so it comes out visually consistent for free)
-        gtk2-engines-murrine \
-        sassc \
-        plank \
-        dconf-cli \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# ── GTK theme + icon theme + cursor theme + wallpapers, rebranded to Zeish ───
-# Base look is vinceliuice's Fluent (gtk+icon) and ful1e5's Bibata (cursor) —
-# square window buttons, no blur (blur is a GNOME-Shell/Blur-My-Shell-only
-# tweak; omitting it is what gives the "normal version" from the repo). Every
-# installed dir/index.theme is renamed Fluent/Bibata -> Zeish afterward so
-# nothing upstream-branded is user-visible (Appearance dropdowns, About
-# panels, etc. all read the directory name / index.theme Name= field).
-RUN git clone --depth 1 https://github.com/vinceliuice/Fluent-gtk-theme.git /tmp/fluent-gtk \
-    && /tmp/fluent-gtk/install.sh -c dark light -s standard --tweaks square \
-    && git clone --depth 1 https://github.com/vinceliuice/Fluent-icon-theme.git /tmp/fluent-icon \
-    && /tmp/fluent-icon/install.sh -d /usr/share/icons \
-    && git clone --depth 1 --branch Wallpaper https://github.com/vinceliuice/Fluent-gtk-theme.git /tmp/fluent-wallpapers \
-    && mkdir -p /usr/share/wallpapers/zeish-fluent \
-    && cp /tmp/fluent-wallpapers/wallpaper-1080p/Fluent-mountain-night.png /usr/share/wallpapers/zeish-fluent/zeish-wallpaper-mountain-night.png \
-    && cp /tmp/fluent-wallpapers/wallpaper-1080p/Fluent-mountain-day.png /usr/share/wallpapers/zeish-fluent/zeish-wallpaper-mountain-day.png \
-    && cp /tmp/fluent-wallpapers/wallpaper-1080p/Fluent-building-night.png /usr/share/wallpapers/zeish-fluent/zeish-wallpaper-building-night.png \
-    && cp /tmp/fluent-wallpapers/wallpaper-1080p/wallpaper-default-gradient.png /usr/share/wallpapers/zeish-fluent/zeish-wallpaper-gradient.png \
-    && rm -rf /tmp/fluent-gtk /tmp/fluent-icon /tmp/fluent-wallpapers \
-    && curl -fsSL https://github.com/ful1e5/Bibata_Cursor/releases/latest/download/Bibata-Modern-Ice.tar.xz \
-        | tar -xJ -C /usr/share/icons/ \
-    && mv /usr/share/icons/Bibata-Modern-Ice /usr/share/icons/Zeish-Cursor \
-    && sed -i -e 's/Bibata-Modern-Ice/Zeish-Cursor/g' -e 's/Bibata/Zeish/g' \
-        /usr/share/icons/Zeish-Cursor/index.theme \
-    && cd /usr/share/themes \
-    && for d in Fluent-*; do mv "$d" "Zeish-${d#Fluent-}"; done \
-    && cd /usr/share/icons \
-    && for d in Fluent*; do \
-        if [ "$d" = "Fluent" ]; then mv "$d" Zeish; else mv "$d" "Zeish-${d#Fluent-}"; fi; \
-    done \
-    && grep -rl "Fluent" /usr/share/themes/Zeish-* /usr/share/icons/Zeish* --include=index.theme \
-        | xargs sed -i 's/Fluent/Zeish/g'
-
-# ── Plank dock, themed to match (system-wide dconf default) ──────────────────
-COPY config/dconf/ /etc/dconf/
-RUN dconf update
 
 # ── Firefox (proper .deb from Mozilla, not snap) ─────────────────────────────
 RUN wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | \
@@ -94,13 +63,28 @@ RUN git clone --depth 1 --branch zeish-desktop \
     https://github.com/spinupdev/noVNC.git /opt/novnc && \
     ln -sf /opt/novnc/vnc.html /opt/novnc/index.html
 
-# ── VSCodium (VS Code without MS telemetry/branding — fits the rebrand) ──────
-RUN curl -fsSL https://gitlab.com/paulcarroty/vscodium-deb-rpm-repo/raw/master/pub.gpg \
-        | gpg --dearmor > /usr/share/keyrings/vscodium.gpg \
-    && echo "deb [arch=arm64,amd64 signed-by=/usr/share/keyrings/vscodium.gpg] https://download.vscodium.com/debs vscodium main" \
-        > /etc/apt/sources.list.d/vscodium.list \
-    && apt-get update && apt-get install -y --no-install-recommends codium \
+# ── VS Code (Microsoft's official build, not VSCodium) ───────────────────────
+RUN wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor > /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
+        > /etc/apt/sources.list.d/vscode.list \
+    && apt-get update && apt-get install -y --no-install-recommends code \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── Claude Code + Codex CLIs (official native builds, no Node.js needed) ─────
+# Neither Anthropic nor OpenAI ships an official Linux desktop app for these
+# (both are Mac/Windows-only) — CLIs only, installed system-wide under
+# /usr/local/bin rather than the installer's default ~/.local/bin so every
+# shell/user picks them up without PATH changes.
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL https://claude.ai/install.sh | bash \
+    && mv /home/user/.local/bin/claude /usr/local/bin/claude \
+    && CODEX_ARCH=$([ "$ARCH" = "arm64" ] && echo aarch64 || echo x86_64) \
+    && CODEX_VERSION=$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | grep -m1 '"tag_name"' | sed -E 's/.*"rust-v([^"]+)".*/\1/') \
+    && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${CODEX_ARCH}-unknown-linux-musl.tar.gz" \
+        | tar -xz -C /tmp \
+    && mv /tmp/codex-${CODEX_ARCH}-unknown-linux-musl /usr/local/bin/codex \
+    && chmod +x /usr/local/bin/codex
 
 # ── Wine (amd64 only — WineHQ has no arm64 build; Ubuntu's arm64 "wine" route
 # is box64 emulation, which is unreliable enough that shipping it broken is
@@ -141,19 +125,19 @@ RUN ARCH=$(dpkg --print-architecture) \
     else \
         cp /usr/share/applications/firefox.desktop /home/user/Desktop/; \
     fi \
-    && cp /usr/share/applications/xfce4-terminal.desktop /home/user/Desktop/ \
-    && cp /usr/share/applications/codium.desktop /home/user/Desktop/ \
+    && cp /usr/share/applications/org.gnome.Terminal.desktop /home/user/Desktop/ \
+    && cp /usr/share/applications/code.desktop /home/user/Desktop/ \
+    && cp /usr/share/applications/org.gnome.Nautilus.desktop /home/user/Desktop/ \
     && chmod +x /home/user/Desktop/*.desktop
 
-# ── Wallpapers ─────────────────────────────────────────────────────────────────
-COPY wallpapers/ /usr/share/wallpapers/zeish/
+# ── Dark mode (system-wide dconf default) ────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends dconf-cli \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY config/dconf/ /etc/dconf/
+RUN dconf update
 
 # ── Configs and scripts ───────────────────────────────────────────────────────
-# xfce4 config goes straight into the user's real HOME (base already created
-# `user`) — NOT /etc/skel, which only seeds accounts created *after* this COPY
-# and was never read since the user already existed.
 COPY config/supervisord.conf /etc/supervisor/supervisord.conf
-COPY config/xfce4/ /home/user/.config/xfce4/
 COPY run.json /etc/run.json
 COPY scripts/entrypoint.sh /entrypoint.sh
 COPY scripts/websockify-fork.py /usr/local/bin/websockify-fork
@@ -163,7 +147,7 @@ RUN chmod +x /entrypoint.sh /usr/local/bin/websockify-fork
 # would copy-up base's multi-GB toolchain into a duplicate layer for a
 # no-op ownership change (everything else in $HOME is already user-owned).
 RUN mkdir -p /var/log/supervisor \
-    && chown -R ${USER}:${USER} ${HOME}/.config ${HOME}/Desktop
+    && chown -R ${USER}:${USER} ${HOME}/Desktop
 
 EXPOSE ${PROXY_PORT}
 
