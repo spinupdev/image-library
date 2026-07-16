@@ -90,9 +90,17 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections \
     && useradd -u 1000 -m -s /bin/bash -G sudo,docker,users user \
     && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd \
-    && echo "" > /etc/machine-id \
-    && echo "" > /var/lib/dbus/machine-id \
-    && echo "root:root" | chpasswd
+    && echo "root:root" | chpasswd \
+    # A machine-id must be a real 32-hex-char ID, not empty — an empty file
+    # is invalid, not "auto-generate on boot" (that requires a dbus init
+    # script we don't run). An empty file makes dbus-daemon refuse to start
+    # a session bus at all, silently breaking anything that depends on one
+    # (dconf, GTK app state, etc). All containers from this image share the
+    # same baked ID, which is fine here — uniqueness matters for real hosts
+    # tracking hardware, not ephemeral sandbox containers.
+    && python3 -c "import uuid; print(uuid.uuid4().hex)" | tee /etc/machine-id \
+    && mkdir -p /var/lib/dbus \
+    && cp /etc/machine-id /var/lib/dbus/machine-id
 
 # ── User-owned toolchain installs ──────────────────────────────────────────────
 # Deliberately no `USER user` directive anywhere in this image: a container's
@@ -194,6 +202,9 @@ RUN chmod 644 /etc/profile.d/depot-toolchain.sh /etc/profile.d/prompt.sh \
     && printf "$SOURCE_LINE" >> /root/.bashrc \
     && printf "$SOURCE_LINE" >> /home/user/.bashrc \
     && chown user:user /home/user/.bashrc \
-    && echo "zeish" > /etc/hostname
+    && echo "zeish" > /etc/hostname \
+    # Cosmetic only — NAME/ID/VERSION_ID stay untouched since apt, the
+    # Mozilla repo pin, and other tooling key off them for compatibility.
+    && sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Zeish Desktop"/' /etc/os-release
 
 WORKDIR /workspace
