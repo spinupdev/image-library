@@ -59,8 +59,12 @@ RUN wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── noVNC (spinupdev fork, zeish-desktop branch: stripped UI, auto-connect) ──
-RUN git clone --depth 1 --branch zeish-desktop \
-    https://github.com/spinupdev/noVNC.git /opt/novnc && \
+# Pinned to a commit, not the branch tip: GH Actions' layer cache (type=gha)
+# keys on this instruction's literal text, so `--branch zeish-desktop` alone
+# would keep serving a stale clone from cache forever after the fork moves —
+# bump this SHA whenever zeish-desktop gets new commits that need to ship.
+RUN git clone https://github.com/spinupdev/noVNC.git /opt/novnc && \
+    git -C /opt/novnc checkout 4defae6 && \
     ln -sf /opt/novnc/vnc.html /opt/novnc/index.html
 
 # ── VS Code (Microsoft's official build, not VSCodium) ───────────────────────
