@@ -119,6 +119,11 @@ RUN ARCH=$(dpkg --print-architecture) \
         && update-alternatives --set gnome-www-browser /usr/bin/firefox; \
     fi
 
+# ── Chrome enterprise policy (amd64 only — skip first-run metrics/sign-in/
+# default-browser nags instead of prompting for them every session) ─────────
+RUN mkdir -p /etc/opt/chrome/policies/managed
+COPY config/chrome-policies/managed.json /etc/opt/chrome/policies/managed/managed.json
+
 # ── Desktop shortcuts (Chrome on amd64 / Firefox on arm64, Terminal, VSCodium) ─
 # Reuses each app's own installed .desktop file rather than hand-authoring
 # one, so Exec/Icon stay correct if the app updates.
