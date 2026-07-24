@@ -64,7 +64,7 @@ RUN wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | \
 # would keep serving a stale clone from cache forever after the fork moves —
 # bump this SHA whenever zeish-desktop gets new commits that need to ship.
 RUN git clone https://github.com/spinupdev/noVNC.git /opt/novnc && \
-    git -C /opt/novnc checkout 4defae6 && \
+    git -C /opt/novnc checkout 5280513 && \
     ln -sf /opt/novnc/vnc.html /opt/novnc/index.html
 
 # ── VS Code (Microsoft's official build, not VSCodium) ───────────────────────
