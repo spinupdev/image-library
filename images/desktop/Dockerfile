@@ -30,6 +30,8 @@ ENV VNC_PORT=5900 \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         labwc \
+        xwayland \
+        x11-xserver-utils \
         wayvnc \
         dbus \
         xdg-desktop-portal \
@@ -147,6 +149,7 @@ RUN dconf update
 
 # ── Configs and scripts ───────────────────────────────────────────────────────
 COPY config/supervisord.conf /etc/supervisor/supervisord.conf
+COPY config/labwc/ ${HOME}/.config/labwc/
 COPY run.json /etc/run.json
 COPY scripts/entrypoint.sh /entrypoint.sh
 COPY scripts/websockify-fork.py /usr/local/bin/websockify-fork
@@ -156,7 +159,7 @@ RUN chmod +x /entrypoint.sh /usr/local/bin/websockify-fork
 # would copy-up base's multi-GB toolchain into a duplicate layer for a
 # no-op ownership change (everything else in $HOME is already user-owned).
 RUN mkdir -p /var/log/supervisor \
-    && chown -R ${USER}:${USER} ${HOME}/Desktop
+    && chown -R ${USER}:${USER} ${HOME}/Desktop ${HOME}/.config/labwc
 
 EXPOSE ${PROXY_PORT}
 

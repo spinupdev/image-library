@@ -1,0 +1,8 @@
+#!/bin/sh
+# labwc exports DISPLAY before running this script. xset creates the lazy
+# Xwayland server; xwaylandPersistence in rc.xml keeps it alive afterwards.
+# Permit only the root-owned sandboxd sidecar to connect over the local socket.
+until xset q >/dev/null 2>&1; do
+  sleep 0.1
+done
+xhost +SI:localuser:root

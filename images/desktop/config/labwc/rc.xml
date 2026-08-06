@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core>
+    <!-- sandboxd connects over X11 to capture and drive the guest display.
+         Keep Xwayland alive after the initial local xset probe so its scoped
+         data-plane routes remain available for the life of the sandbox. -->
+    <xwaylandPersistence>yes</xwaylandPersistence>
+  </core>
+</labwc_config>
