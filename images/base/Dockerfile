@@ -136,6 +136,12 @@ RUN ARCH=$(dpkg --print-architecture) \
             '; \
     fi
 
+# ── Agent CDP helper (Arin / Playwright connectOverCDP) ───────────────────────
+# Shared by desktop + workstation (both FROM base). Starts Chrome with
+# --remote-debugging-port; see scripts/zeish-chrome-cdp.
+COPY scripts/zeish-chrome-cdp /usr/local/bin/zeish-chrome-cdp
+RUN chmod +x /usr/local/bin/zeish-chrome-cdp
+
 # ── Python via pyenv (version-switchable, alongside system python3) ──────────
 # The -dev headers below are only needed to compile CPython; installing and
 # purging them within this single RUN keeps them out of the image entirely

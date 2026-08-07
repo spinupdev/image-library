@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Start Chromium/Chrome with CDP for agent automation (Arin / Playwright).
+#
+# Contract used by @arin/harness ensureZeishBrowserCdp:
+#   zeish-chrome-cdp [port]   # default 9222
+#   - exit 0 + print STARTED when http://127.0.0.1:$PORT/json/version is up
+#   - exit 42 + NO_CHROME if no binary found
+#   - idempotent if CDP already listening
+#
+# Image layout (this repo):
+#   amd64  → /usr/bin/google-chrome-stable (Google Chrome)
+#   arm64  → /usr/local/bin/google-chrome-stable (Playwright Chromium symlink)
+
+set -u
+
+PORT="${1:-9222}"
+UD="/tmp/zeish-cdp-${PORT}"
+LOG="/tmp/zeish-chrome-cdp-${PORT}.log"
+PIDFILE="/tmp/zeish-chrome-cdp-${PORT}.pid"
+
+if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+  echo STARTED
+  exit 0
+fi
+
+mkdir -p "$UD"
+: >"$LOG"
+
+is_bin() {
+  command -v "$1" >/dev/null 2>&1 || test -x "$1"
+}
+
+# Prefer PATH names first (image-library installs these), then absolute paths.
+CANDIDATES=(
+  google-chrome-stable
+  google-chrome
+  chromium
+  chromium-browser
+  /usr/bin/google-chrome-stable
+  /usr/bin/google-chrome
+  /opt/google/chrome/chrome
+  /opt/google/chrome/google-chrome
+  /usr/local/bin/google-chrome-stable
+  /usr/local/bin/google-chrome
+)
+
+# arm64 Playwright cache (base image installs under /home/user/.cache/ms-playwright)
+if [ -d "${HOME:-/home/user}/.cache/ms-playwright" ]; then
+  while IFS= read -r -d '' f; do
+    CANDIDATES+=("$f")
+  done < <(find "${HOME:-/home/user}/.cache/ms-playwright" \( -name chrome -o -name headless_shell -o -name chromium \) -type f -print0 2>/dev/null | head -z -n 5)
+fi
+
+start_bin() {
+  local BIN="$1"
+  # headless=new works in microVMs without a display; desktop still has Wayland
+  # for interactive use — CDP automation does not need the Budgie session.
+  nohup "$BIN" \
+    --headless=new \
+    --no-sandbox \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --disable-software-rasterizer \
+    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-port="$PORT" \
+    --user-data-dir="$UD" \
+    about:blank >>"$LOG" 2>&1 &
+  echo $! >"$PIDFILE"
+
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+      echo STARTED
+      exit 0
+    fi
+    sleep 0.4
+  done
+  echo "launch_failed bin=$BIN" >>"$LOG"
+  return 1
+}
+
+for BIN in "${CANDIDATES[@]}"; do
+  if is_bin "$BIN"; then
+    if start_bin "$BIN"; then
+      exit 0
+    fi
+  fi
+done
+
+echo NO_CHROME >&2
+echo "--- which ---" >&2
+command -v google-chrome-stable google-chrome chromium 2>&1 >&2 || true
+ls -la /usr/bin/google-chrome* /opt/google/chrome 2>&1 >&2 || true
+tail -n 40 "$LOG" 2>&1 >&2 || true
+exit 42

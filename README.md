@@ -7,14 +7,34 @@ Docker images for the spinupdev platform. Images are published to
 
 | Image | Base | Description |
 |-------|------|-------------|
-| [`base`](images/base) | ubuntu:26.04 | Shared dev toolchain: Docker, version-switchable Go/Node/Python (`g`/`nvm`/`pyenv`), ripgrep/fzf/fd/gh/jq, filebrowser, AI agent CLIs. Not run standalone in practice — `desktop` and `workstation` both build `FROM` it |
-| [`desktop`](images/desktop) | `base` | XFCE4 desktop over VNC/noVNC, Firefox, supervisord — everything in `base` plus a GUI |
+| [`base`](images/base) | ubuntu:26.04 | Shared dev toolchain: Docker, version-switchable Go/Node/Python (`g`/`nvm`/`pyenv`), ripgrep/fzf/fd/gh/jq, filebrowser, AI agent CLIs, **Chrome** (amd64) / Playwright Chromium (arm64), `zeish-chrome-cdp` helper. Not run standalone in practice — `desktop` and `workstation` both build `FROM` it |
+| [`desktop`](images/desktop) | `base` | Budgie/Wayland desktop over wayvnc/noVNC, Chrome (amd64) / Firefox, VS Code, supervisord — everything in `base` plus a GUI |
 | [`ubuntu`](images/ubuntu) | ubuntu:26.04 | Base Ubuntu with SSH, user setup, and init |
 | [`workstation`](images/workstation) | `base` | Headless dev workstation — `base` plus sshd |
 
 `desktop` and `workstation` share the exact same toolchain (`base`) so a script
 or agent that works in one works in the other; `desktop` is just `base` with a
 GUI bolted on.
+
+### Agent browser (Arin / Playwright CDP)
+
+`base` (and therefore `desktop` / `workstation`) installs:
+
+| Path | Role |
+|------|------|
+| `/usr/bin/google-chrome-stable` | Google Chrome (linux/amd64) |
+| `/usr/local/bin/google-chrome-stable` | Playwright Chromium symlink (arm64) |
+| `/usr/local/bin/zeish-chrome-cdp` | Starts Chrome with `--remote-debugging-port` (default **9222**) |
+
+```sh
+# Inside a running sandbox:
+zeish-chrome-cdp 9222
+# → prints STARTED when http://127.0.0.1:9222/json/version is ready
+```
+
+Arin (`@arin/harness` `ensureZeishBrowserCdp`) prefers this helper, then falls
+back to the same binary paths. Edge templates should use the **desktop** image
+and expose port **9222** for preview/CDP tunnels.
 
 ## Building locally
 
