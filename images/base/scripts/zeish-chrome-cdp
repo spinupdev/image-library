@@ -51,20 +51,43 @@ if [ -d "${HOME:-/home/user}/.cache/ms-playwright" ]; then
   done < <(find "${HOME:-/home/user}/.cache/ms-playwright" \( -name chrome -o -name headless_shell -o -name chromium \) -type f -print0 2>/dev/null | head -z -n 5)
 fi
 
+MAX_RESTARTS=5
+
+# A plain `nohup chrome &` has nothing watching it: if Chrome dies mid-session
+# (OOM in a memory-constrained microVM, renderer crash, etc.) CDP goes dark
+# permanently and the only trace is a log file that dies with the VM. This
+# loop relaunches Chrome in place when it exits, and stamps each exit into
+# $LOG so a post-mortem `cat`/exec pull actually shows why. Bounded so a
+# genuinely broken binary doesn't spin the VM's CPU forever.
+watchdog() {
+  local BIN="$1"
+  local restarts=0
+  while [ "$restarts" -le "$MAX_RESTARTS" ]; do
+    "$BIN" \
+      --headless=new \
+      --no-sandbox \
+      --disable-gpu \
+      --disable-dev-shm-usage \
+      --disable-software-rasterizer \
+      --remote-debugging-address=0.0.0.0 \
+      --remote-debugging-port="$PORT" \
+      --user-data-dir="$UD" \
+      about:blank >>"$LOG" 2>&1
+    local code=$?
+    restarts=$((restarts + 1))
+    echo "$(date -u +%FT%TZ) chrome exited code=$code restart=${restarts}/${MAX_RESTARTS}" >>"$LOG"
+    sleep 1
+  done
+  echo "$(date -u +%FT%TZ) chrome crash-looped past ${MAX_RESTARTS} restarts, giving up" >>"$LOG"
+}
+
 start_bin() {
   local BIN="$1"
-  # headless=new works in microVMs without a display; desktop still has Wayland
-  # for interactive use — CDP automation does not need the Budgie session.
-  nohup "$BIN" \
-    --headless=new \
-    --no-sandbox \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --disable-software-rasterizer \
-    --remote-debugging-address=0.0.0.0 \
-    --remote-debugging-port="$PORT" \
-    --user-data-dir="$UD" \
-    about:blank >>"$LOG" 2>&1 &
+  # A subshell forked with `&` inherits this script's functions/variables
+  # directly (no export needed) and, like the plain `nohup chrome &` this
+  # replaces, keeps running after this script exits.
+  ( watchdog "$BIN" ) >>"$LOG" 2>&1 &
+  disown
   echo $! >"$PIDFILE"
 
   local i
