@@ -14,14 +14,56 @@
 set -u
 
 PORT="${1:-9222}"
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "NO_CHROME: python3 is required for the CDP relay" >&2
+  exit 42
+fi
+LOCAL_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 UD="/tmp/zeish-cdp-${PORT}"
 LOG="/tmp/zeish-chrome-cdp-${PORT}.log"
 PIDFILE="/tmp/zeish-chrome-cdp-${PORT}.pid"
+RELAY_PIDFILE="/tmp/zeish-chrome-cdp-relay-${PORT}.pid"
 
-if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+listening_pids() {
+  ss -ltnp 2>/dev/null \
+    | grep -E ":($1) " \
+    | sed -n 's/.*pid=\([0-9]*\).*/\1/p'
+}
+
+stop_port() {
+  local port="$1"
+  local pid
+  for pid in $(listening_pids "$port"); do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+
+global_ipv4() {
+  ip -4 -o addr show scope global 2>/dev/null \
+    | awk '{print $4}' \
+    | cut -d/ -f1
+}
+
+is_routable() {
+  local ip
+  for ip in $(global_ipv4); do
+    if curl -sf --connect-timeout 1 "http://${ip}:${PORT}/json/version" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1 \
+  && is_routable; then
   echo STARTED
   exit 0
 fi
+
+# Older image helpers may have left a loopback-only Chrome on PORT. Remove it
+# before taking ownership of PORT with the relay below.
+stop_port "$PORT"
+rm -f "$UD"/Singleton* 2>/dev/null || true
 
 mkdir -p "$UD"
 : >"$LOG"
@@ -69,8 +111,9 @@ watchdog() {
       --disable-gpu \
       --disable-dev-shm-usage \
       --disable-software-rasterizer \
-      --remote-debugging-address=0.0.0.0 \
-      --remote-debugging-port="$PORT" \
+      '--remote-allow-origins=*' \
+      --remote-debugging-address=127.0.0.1 \
+      --remote-debugging-port="$LOCAL_PORT" \
       --user-data-dir="$UD" \
       about:blank >>"$LOG" 2>&1
     local code=$?
@@ -92,13 +135,171 @@ start_bin() {
 
   local i
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sf "http://127.0.0.1:${LOCAL_PORT}/json/version" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.4
+  done
+
+  if ! curl -sf "http://127.0.0.1:${LOCAL_PORT}/json/version" >/dev/null 2>&1; then
+    echo "launch_failed bin=$BIN" >>"$LOG"
+    stop_port "$PORT"
+    return 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "launch_failed reason=python3_missing" >>"$LOG"
+    stop_port "$PORT"
+    return 1
+  fi
+
+  (
+    python3 - "$PORT" "$LOCAL_PORT" <<'PY'
+import re
+import socket
+import sys
+import threading
+
+listen_port = int(sys.argv[1])
+target_port = int(sys.argv[2])
+def read_headers(sock):
+    data = b""
+    while b"\r\n\r\n" not in data and len(data) <= 1024 * 1024:
+        chunk = sock.recv(65536)
+        if not chunk:
+            return data
+        data += chunk
+    return data
+
+
+def rewrite_request(data):
+    match = re.search(rb"(?im)^Host:\s*([^\r\n]+)", data)
+    public_host = match.group(1).decode("ascii", "replace").strip() if match else None
+    data = re.sub(
+        rb"(?im)^Host:[^\r\n]*",
+        f"Host: 127.0.0.1:{target_port}".encode(),
+        data,
+        count=1,
+    )
+    data = re.sub(
+        rb"(?im)^Origin:[^\r\n]*",
+        b"Origin: http://localhost",
+        data,
+        count=1,
+    )
+    return data, public_host
+
+
+def rewrite_discovery(data, public_host):
+    if not public_host:
+        return data
+    return data.replace(
+        f"ws://127.0.0.1:{target_port}".encode(),
+        f"ws://{public_host}".encode(),
+    )
+
+
+def pump(source, destination):
+    try:
+        while True:
+            data = source.recv(65536)
+            if not data:
+                return
+            destination.sendall(data)
+    except OSError:
+        return
+    finally:
+        try:
+            destination.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def pump_response(source, destination, public_host):
+    try:
+        data = read_headers(source)
+        if not data:
+            return
+        header_end = data.find(b"\r\n\r\n")
+        if header_end < 0:
+            destination.sendall(data)
+            return
+        header_end += 4
+        headers = data[:header_end]
+        body = data[header_end:]
+        if b" 101 " in headers or b"Content-Length:" not in headers:
+            destination.sendall(rewrite_discovery(data, public_host))
+            return
+        match = re.search(rb"(?im)^Content-Length:\s*(\d+)", headers)
+        length = int(match.group(1)) if match else len(body)
+        while len(body) < length:
+            chunk = source.recv(65536)
+            if not chunk:
+                break
+            body += chunk
+        rewritten_body = rewrite_discovery(body[:length], public_host)
+        headers = re.sub(
+            rb"(?im)^Content-Length:\s*\d+",
+            f"Content-Length: {len(rewritten_body)}".encode(),
+            headers,
+            count=1,
+        )
+        destination.sendall(headers + rewritten_body)
+        if len(body) > length:
+            destination.sendall(body[length:])
+        while True:
+            chunk = source.recv(65536)
+            if not chunk:
+                return
+            destination.sendall(chunk)
+    except OSError:
+        return
+    finally:
+        try:
+            destination.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def handle(client):
+    try:
+        request = read_headers(client)
+        upstream = socket.create_connection(("127.0.0.1", target_port), timeout=5)
+        upstream.settimeout(None)
+        request, public_host = rewrite_request(request)
+        upstream.sendall(request)
+    except OSError:
+        client.close()
+        return
+    threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
+    threading.Thread(
+        target=pump_response,
+        args=(upstream, client, public_host),
+        daemon=True,
+    ).start()
+
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("0.0.0.0", listen_port))
+server.listen(128)
+while True:
+    client, _ = server.accept()
+    threading.Thread(target=handle, args=(client,), daemon=True).start()
+PY
+  ) >>"$LOG" 2>&1 &
+  disown
+  echo $! >"$RELAY_PIDFILE"
+
+  for i in 1 2 3 4 5 6 7 8 9 10; do
     if curl -sf "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
       echo STARTED
       exit 0
     fi
-    sleep 0.4
+    sleep 0.2
   done
   echo "launch_failed bin=$BIN" >>"$LOG"
+  stop_port "$PORT"
   return 1
 }
 
