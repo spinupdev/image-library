@@ -8,7 +8,7 @@ build:
 	docker build -t $(IMAGE):$(TAG) $(DIR)
 
 run:
-	docker run --rm -p 8080:8080 \
+	docker run --rm -p 6080:6080 \
 		--shm-size=256m \
 		$(IMAGE):$(TAG)
 
