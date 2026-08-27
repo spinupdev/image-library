@@ -48,7 +48,7 @@ make -C images/base build
 # Build a specific image
 make -C images/desktop build
 
-# Build and run desktop (opens on :8080)
+# Build and run desktop (opens on :6080)
 make -C images/desktop run
 ```
 

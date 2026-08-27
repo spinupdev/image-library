@@ -3,7 +3,7 @@ FROM ghcr.io/spinupdev/base:latest
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV VNC_PORT=5900 \
-    PROXY_PORT=8080 \
+    PROXY_PORT=6080 \
     XDG_RUNTIME_DIR=/run/user/1000 \
     WAYLAND_DISPLAY=wayland-0 \
     WLR_BACKENDS=headless \
